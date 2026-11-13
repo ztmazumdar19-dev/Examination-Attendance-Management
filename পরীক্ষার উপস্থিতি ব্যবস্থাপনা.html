@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>পরীক্ষার উপস্থিতি নির্ধারণ অ্যাপ</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts - Hind Siliguri -->
+    <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Hind Siliguri', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Hind Siliguri', sans-serif;
+            background-color: #f8fafc;
+        }
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .print-only {
+                display: block !important;
+            }
+            body {
+                background: white;
+            }
+            .card-shadow {
+                box-shadow: none !important;
+                border: 1px solid #e2e8f0;
+            }
+            .print-hidden-col {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-slate-100 text-center">
+            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl shadow-inner">
+                <i class="fa-solid fa-lock"></i>
+            </div>
+            <h2 class="text-xl font-bold text-slate-800">পরীক্ষার উপস্থিতি সিস্টেম</h2>
+            <p class="text-xs text-slate-500 mt-1 mb-6">অনুগ্রহ করে লগইন করুন (এডমিন অথবা ইউজার)</p>
+
+            <form onsubmit="handleLogin(event)" class="space-y-4 text-left">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">ইউজারনেম (Username)</label>
+                    <input type="text" id="loginUsername" required class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">পাসওয়ার্ড (Password)</label>
+                    <input type="password" id="loginPassword" required class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium">
+                </div>
+                <div id="loginErrorMsg" class="hidden text-xs text-rose-600 font-semibold bg-rose-50 p-2 rounded-xl text-center">
+                    ভুল ইউজারনেম অথবা পাসওয়ার্ড!
+                </div>
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-600/30 transition text-xs flex items-center justify-center gap-2">
+                    প্রবেশ করুন <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, initializeFirestore, persistentLocalCache } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'exam-attendance-app';
+        const hasRealConfig = typeof __firebase_config !== 'undefined';
+        const firebaseConfig = hasRealConfig 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: "AIzaSyDemoConfigKeyForExamApp12345678",
+                authDomain: "exam-attendance-demo.firebaseapp.com",
+                projectId: "exam-attendance-demo",
+                storageBucket: "exam-attendance-demo.appspot.com",
+                messagingSenderId: "123456789012",
+                appId: "1:123456789012:web:abcdef123456789"
+            };
+
+        let app, auth, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = initializeFirestore(app, {
+                localCache: persistentLocalCache()
+            });
+        } catch (e) {
+            console.log("Firebase initialized in local-only fallback mode.");
+        }
+
+        window.db = db;
+        window.auth = auth;
+        window.appId = appId;
+
+        function updateSyncBadge(status) {
+            const badge = document.getElementById('cloudSyncStatus');
+            if (!badge) return;
+            if (status) {
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> ক্লাউড সিঙ্ক চালু`;
+                badge.className = "text-[10px] bg-emerald-900/60 text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1.5 font-medium";
+            } else {
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span> লোকাল মোড (অফলাইন)`;
+                badge.className = "text-[10px] bg-amber-900/60 text-amber-200 px-2.5 py-1 rounded-full border border-amber-500/30 flex items-center gap-1.5 font-medium";
+            }
+        }
+
+        async function initAuth() {
+            if (!auth) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {}
+        }
+
+        const getAttendanceDocRef = () => db ? doc(db, 'artifacts', window.appId, 'public', 'data', 'attendanceData', 'mainDoc') : null;
+
+        window.initFirebaseSync = async function() {
+            if (!hasRealConfig || !db) {
+                updateSyncBadge(false);
+                return;
+            }
+
+            await initAuth();
+            
+            const docRef = getAttendanceDocRef();
+            if (!docRef) {
+                updateSyncBadge(false);
+                return;
+            }
+
+            try {
+                onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.studentsList) {
+                            window.studentsList = data.studentsList;
+                            window.renderStudentsTable();
+                            window.updateDashboardStats();
+                            window.populateDateFilter();
+                        }
+                        if (data.appConfig) {
+                            window.appConfig = data.appConfig;
+                            window.populateDropdowns();
+                        }
+                        if (data.schoolName) {
+                            document.getElementById('schoolNameInput').value = data.schoolName;
+                        }
+                        updateSyncBadge(true);
+                    }
+                }, (error) => {
+                    updateSyncBadge(false);
+                });
+            } catch(e) {
+                updateSyncBadge(false);
+            }
+        };
+
+        window.syncToCloud = async function() {
+            if (!hasRealConfig || !auth || !db) return;
+            if (!auth.currentUser) {
+                try { await signInAnonymously(auth); } catch(e) {}
+            }
+            if (!auth.currentUser) return;
+
+            try {
+                const docRef = getAttendanceDocRef();
+                if (!docRef) return;
+                const schoolName = document.getElementById('schoolNameInput').value || '';
+                await setDoc(docRef, {
+                    studentsList: window.studentsList || [],
+                    appConfig: window.appConfig || {},
+                    schoolName: schoolName,
+                    lastUpdated: Date.now()
+                }, { merge: true });
+                updateSyncBadge(true);
+            } catch (err) {
+                updateSyncBadge(false);
+            }
+        };
+    </script>
+
+    <!-- Header Section -->
+    <header class="bg-emerald-800 text-white shadow-md no-print border-b border-emerald-700">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                
+                <!-- Logo & Title -->
+                <div class="flex items-center gap-3">
+                    <div class="w-11 h-11 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center text-xl text-yellow-300 border border-white/20 shadow-inner">
+                        <i class="fa-solid fa-graduation-cap"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold tracking-wide">পরীক্ষার উপস্থিতি ব্যবস্থাপনা</h1>
+                        <p class="text-xs text-emerald-200">স্মার্ট ও নির্ভরযোগ্য ডিজিটাল হাজিরা সিস্টেম</p>
+                    </div>
+                </div>
+                
+                <!-- Center Credit Text & Cloud Sync Status -->
+                <div class="flex flex-col items-center gap-1">
+                    <div class="text-center bg-emerald-900/40 px-3 py-1 rounded-xl border border-white/10 text-xs text-emerald-100 font-medium">
+                        <i class="fa-solid fa-code text-emerald-300 mr-1"></i> এই অ্যাপটি <span class="font-bold text-yellow-300">সুবালা কম্পিউটার এন্ড কম্পোজ</span> দ্বারা নির্মিত
+                    </div>
+                    <div id="cloudSyncStatus" class="text-[10px] bg-emerald-900/60 text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1.5 font-medium">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> ক্লাউড সিঙ্ক চালু হচ্ছে...
+                    </div>
+                </div>
+
+                <!-- User status, Password Change and Logout -->
+                <div class="flex items-center gap-2">
+                    <button onclick="openChangePassModal()" class="admin-only bg-amber-500/90 hover:bg-amber-600 text-white text-xs px-3 py-2 rounded-xl transition flex items-center gap-1 font-semibold hidden">
+                        <i class="fa-solid fa-key"></i> ইউজার পাসওয়ার্ড
+                    </button>
+                    <div id="userInfoBadge" class="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 text-right">
+                        <div class="text-[10px] text-emerald-200 uppercase tracking-wider font-semibold">লগইন রোল</div>
+                        <div id="currentRoleDisplay" class="text-xs font-bold text-yellow-300">--</div>
+                    </div>
+                    <button onclick="handleLogout()" class="bg-rose-600/80 hover:bg-rose-700 text-white text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
+                        <i class="fa-solid fa-right-from-bracket"></i> লগআউট
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow w-full space-y-6">
+
+        <!-- Top Overview Stats (Dashboard) -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center justify-between hover:shadow-md transition-shadow">
+                <div>
+                    <p class="text-slate-500 text-xs font-semibold mb-1">মোট পরীক্ষার্থী</p>
+                    <h3 id="statTotal" class="text-2xl font-bold text-slate-800">০</h3>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg">
+                    <i class="fa-solid fa-users"></i>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center justify-between hover:shadow-md transition-shadow">
+                <div>
+                    <p class="text-slate-500 text-xs font-semibold mb-1">মোট উপস্থিত</p>
+                    <h3 id="statPresent" class="text-2xl font-bold text-emerald-600">০</h3>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg">
+                    <i class="fa-solid fa-user-check"></i>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center justify-between hover:shadow-md transition-shadow">
+                <div>
+                    <p class="text-slate-500 text-xs font-semibold mb-1">মোট অনুপস্থিত</p>
+                    <h3 id="statAbsent" class="text-2xl font-bold text-rose-600">০</h3>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-lg">
+                    <i class="fa-solid fa-user-xmark"></i>
+                </div>
+            </div>
+        </section>
+
+        <!-- Exam Session Config & Add Student Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 no-print">
+
+            <!-- Exam Configuration Form -->
+            <div class="lg:col-span-5 bg-white rounded-2xl p-6 shadow-sm border border-slate-100 h-fit">
+                <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-emerald-600"></i> পরীক্ষার সাধারণ তথ্য
+                    </h2>
+                    <span id="adminBadge" class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold">এডমিন কন্ট্রোল</span>
+                </div>
+
+                <form id="examSetupForm" class="space-y-3.5">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">বিদ্যালয়ের নাম (প্রিন্টে প্রদর্শিত হবে)</label>
+                        <input type="text" id="schoolNameInput" oninput="saveSchoolName()" placeholder="উদাহরণ: রমজানপুর আইডিয়াল টেকনিক্যাল স্কুল এন্ড কলেজ" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition font-medium">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">পরীক্ষার তারিখ ও বার (এডিটেবল)</label>
+                        <input type="text" id="customDateInput" placeholder="যেমন: মঙ্গলবার, ১০ নভেম্বর ২০২৬" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition font-medium">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-bold text-slate-700">১. পরীক্ষার ধরণ</label>
+                            <button type="button" onclick="openAddOptionModal('examType')" class="admin-only text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
+                                <i class="fa-solid fa-gear text-[10px]"></i> পরিচালনা
+                            </button>
+                        </div>
+                        <select id="examTypeSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-xs font-bold text-slate-700">২. শ্রেণি</label>
+                                <button type="button" onclick="openAddOptionModal('class')" class="admin-only text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
+                                    <i class="fa-solid fa-gear text-[10px]"></i> পরিচালনা
+                                </button>
+                            </div>
+                            <select id="classSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                            </select>
+                        </div>
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-xs font-bold text-slate-700">৩. বিষয়</label>
+                                <button type="button" onclick="openAddOptionModal('subject')" class="admin-only text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
+                                    <i class="fa-solid fa-gear text-[10px]"></i> পরিচালনা
+                                </button>
+                            </div>
+                            <select id="subjectSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Duty Teachers (1 or 2 dynamic teachers) -->
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-bold text-slate-700">৪. ডিউটি শিক্ষক (১/২ জন নির্বাচন করুন)</label>
+                            <button type="button" onclick="openAddOptionModal('teacher')" class="admin-only text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
+                                <i class="fa-solid fa-gear text-[10px]"></i> শিক্ষক পরিচালনা
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <select id="teacherSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition font-medium">
+                            </select>
+                            <select id="teacher2Select" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition font-medium">
+                                <option value="">-- ২য় শিক্ষক (যদি থাকে) --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">৫. কত তলা</label>
+                            <input type="text" id="floorInput" placeholder="যেমন: ২" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">৬. রুম নং</label>
+                            <input type="text" id="roomInput" placeholder="যেমন: ২০৪" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">৭. সময়</label>
+                            <input type="text" id="timeInput" value="10 : 00 AM" placeholder="10 : 00 AM" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">৮. শিফট</label>
+                            <select id="shiftSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                                <option value="সকাল">সকাল</option>
+                                <option value="বিকাল">বিকাল</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Candidate Attendance Entry Form (Right Panel) -->
+            <div class="lg:col-span-7 bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-user-plus text-emerald-600"></i> পরীক্ষার্থী এনট্রি ও উপস্থিতি
+                    </h2>
+                    <span class="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-bold">ইউজার ইনপুট</span>
+                </div>
+
+                <form id="studentEntryForm" onsubmit="handleAddStudent(event)" class="space-y-3.5">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">পরীক্ষার্থীর রোল নং <span class="text-rose-500">*</span></label>
+                            <input type="text" id="studentRoll" required placeholder="উদাহরণ: ০১" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">পরীক্ষার্থীর নাম <span class="text-rose-500">*</span></label>
+                            <input type="text" id="studentName" placeholder="অরিন্দম মজুমদার" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">জন্মতারিখ</label>
+                            <input type="text" id="studentDob" placeholder="যেমন: ১৫/০১/২০১০" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Father's & Mother's Name Inputs with Watermark -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">পিতার নাম</label>
+                            <input type="text" id="fatherName" placeholder="সুব্রত মজুমদার" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">মাতার নাম</label>
+                            <input type="text" id="motherName" placeholder="মিনাক্ষী মজুমদার" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Photo & Signature Capture Section (Cleaned up: No Mobile Camera, NID-style signature crop) -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <!-- 1. Candidate Photo -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">১. পরীক্ষার্থীর ছবি (সামনে/পিছন)</label>
+                            <div class="flex items-center gap-2.5 border border-dashed border-slate-200 rounded-xl p-2.5 bg-slate-50/50">
+                                <div class="w-14 h-14 rounded-xl bg-slate-200 border border-slate-300 flex items-center justify-center overflow-hidden shrink-0 relative group">
+                                    <img id="photoPreview" src="" alt="ছবি প্রিভিউ" class="w-full h-full object-cover hidden">
+                                    <i id="photoPlaceholderIcon" class="fa-solid fa-user text-lg text-slate-400"></i>
+                                    <button type="button" id="removePhotoBtn" onclick="resetCapturedPhoto('photo')" class="hidden absolute inset-0 bg-black/50 text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="flex flex-col gap-1.5 w-full">
+                                    <button type="button" onclick="openCameraModal('photo', 'user')" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center justify-center gap-1.5 font-medium">
+                                        <i class="fa-solid fa-camera"></i> ক্যামেরা চালু করুন
+                                    </button>
+                                    <label class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[10px] px-2 py-1 rounded-lg transition flex items-center justify-center gap-1 font-medium cursor-pointer text-center">
+                                        <i class="fa-solid fa-upload"></i> ফাইল আপলোড
+                                        <input type="file" id="photoFileInput" accept="image/*" onchange="handleFileUpload(event, 'photo')" class="hidden">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 2. Candidate Signature Photo (NID Style Cropped) -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">২. স্বাক্ষরের ছবি (NID স্টাইল ক্রপ)</label>
+                            <div class="flex items-center gap-2.5 border border-dashed border-slate-200 rounded-xl p-2.5 bg-slate-50/50">
+                                <div class="w-14 h-14 rounded-xl bg-slate-200 border border-slate-300 flex items-center justify-center overflow-hidden shrink-0 relative group">
+                                    <img id="sigPreview" src="" alt="স্বাক্ষর প্রিভিউ" class="w-full h-full object-contain bg-white hidden">
+                                    <i id="sigPlaceholderIcon" class="fa-solid fa-signature text-lg text-slate-400"></i>
+                                    <button type="button" id="removeSigBtn" onclick="resetCapturedPhoto('signature')" class="hidden absolute inset-0 bg-black/50 text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="flex flex-col gap-1.5 w-full">
+                                    <button type="button" onclick="openCameraModal('signature', 'environment', true)" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center justify-center gap-1.5 font-medium">
+                                        <i class="fa-solid fa-camera"></i> স্বাক্ষর ক্যামেরা (ক্রপ)
+                                    </button>
+                                    <label class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[10px] px-2 py-1 rounded-lg transition flex items-center justify-center gap-1 font-medium cursor-pointer text-center">
+                                        <i class="fa-solid fa-upload"></i> ফাইল আপলোড
+                                        <input type="file" id="sigFileInput" accept="image/*" onchange="handleFileUpload(event, 'signature')" class="hidden">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Remarks Field -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">মন্তব্য (অপশনাল - প্রিন্টে প্রদর্শিত হবে)</label>
+                        <input type="text" id="remarksInput" placeholder="উদাহরণ: শারীরিক অসুস্থতা / দেরিতে আগমন" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+                    </div>
+
+                    <!-- Attendance Toggle Status -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">উপস্থিতির অবস্থা</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="relative flex items-center justify-center p-2.5 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50/50 has-[:checked]:text-emerald-700">
+                                <input type="radio" name="attendanceStatus" value="Present" checked class="sr-only">
+                                <span class="text-xs font-bold flex items-center gap-1.5">
+                                    <i class="fa-solid fa-circle-check text-emerald-600"></i> উপস্থিত (Present)
+                                </span>
+                            </label>
+                            <label class="relative flex items-center justify-center p-2.5 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition has-[:checked]:border-rose-500 has-[:checked]:bg-rose-50/50 has-[:checked]:text-rose-700">
+                                <input type="radio" name="attendanceStatus" value="Absent" class="sr-only">
+                                <span class="text-xs font-bold flex items-center gap-1.5">
+                                    <i class="fa-solid fa-circle-xmark text-rose-600"></i> অনুপস্থিত (Absent)
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-2 text-xs">
+                        <i class="fa-solid fa-plus-circle"></i> পরীক্ষার্থী যুক্ত করুন
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Attendance List Table Section -->
+        <section class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <!-- Table Action Header -->
+            <div class="p-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 no-print">
+                <div>
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-emerald-600"></i> পরীক্ষার উপস্থিতির তালিকা
+                    </h2>
+                    <p class="text-[11px] text-slate-500 mt-0.5">ড্রপডাউন থেকে যেকোনো সময় উপস্থিত/অনুপস্থিত পরিবর্তন করুন</p>
+                </div>
+
+                <!-- Search & Filters + Export Buttons -->
+                <div class="flex flex-wrap items-center gap-2 no-print">
+                    <!-- Search Input -->
+                    <div class="relative min-w-[130px]">
+                        <i class="fa-solid fa-search absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+                        <input type="text" id="searchInput" oninput="renderStudentsTable()" placeholder="রোল, নাম..." class="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+
+                    <!-- Filter Date -->
+                    <select id="filterDate" onchange="renderStudentsTable()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-semibold bg-amber-50/50 text-amber-900">
+                        <option value="ALL">সকল তারিখ</option>
+                    </select>
+
+                    <!-- Filter Class -->
+                    <select id="filterClass" onchange="renderStudentsTable()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-semibold bg-emerald-50/50 text-emerald-800">
+                        <option value="ALL">সকল শ্রেণি</option>
+                    </select>
+
+                    <!-- Filter Room/Hall -->
+                    <select id="filterRoom" onchange="renderStudentsTable()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-semibold bg-indigo-50/50 text-indigo-800">
+                        <option value="ALL">সকল রুম/হল</option>
+                    </select>
+
+                    <!-- Filter Shift -->
+                    <select id="filterShift" onchange="renderStudentsTable()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                        <option value="ALL">সকল শিফট</option>
+                        <option value="সকাল">সকাল</option>
+                        <option value="বিকাল">বিকাল</option>
+                    </select>
+
+                    <!-- Filter status -->
+                    <select id="filterStatus" onchange="renderStudentsTable()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                        <option value="ALL">সকল অবস্থা</option>
+                        <option value="Present">শুধুমাত্র উপস্থিত</option>
+                        <option value="Absent">শুধুমাত্র অনুপস্থিত</option>
+                    </select>
+
+                    <!-- Print Button -->
+                    <button onclick="preparePrintAndStart()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1 font-semibold">
+                        <i class="fa-solid fa-print"></i> ফিল্টার অনুযায়ী প্রিন্ট
+                    </button>
+
+                    <!-- Export CSV Button -->
+                    <button onclick="exportToCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1 font-semibold">
+                        <i class="fa-solid fa-file-excel"></i> সিএসভি
+                    </button>
+                </div>
+            </div>
+
+            <!-- Print Header Banner (Only visible when printing) -->
+            <div class="hidden print-only p-6 border-b border-slate-300">
+                <div class="text-center mb-4">
+                    <h1 id="printSchoolName" class="text-2xl font-bold text-slate-900 uppercase">--</h1>
+                    <h2 class="text-lg font-bold text-slate-700 mt-1 uppercase">পরীক্ষার উপস্থিতি রিপোর্ট</h2>
+                    <p id="printExamTitle" class="text-xs text-slate-600 font-semibold mt-1">পরীক্ষার ধরণ: --</p>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs border border-slate-200 p-3 rounded-lg bg-slate-50">
+                    <div><strong>শ্রেণী:</strong> <span id="printClass">--</span></div>
+                    <div><strong>বিষয়:</strong> <span id="printSubject">--</span></div>
+                    <div><strong>তারিখ ও বার:</strong> <span id="printDate">--</span></div>
+                    <div><strong>ডিউটি শিক্ষক:</strong> <span id="printTeacher">সুব্রত মজুমদার</span></div>
+                    <div><strong>রুম নং ও হল:</strong> <span id="printRoom">--</span></div>
+                    <div><strong>সময় ও শিফট:</strong> <span id="printTime">--</span></div>
+                </div>
+            </div>
+
+            <!-- Responsive Table (Date column removed) -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50/80 text-slate-600 text-xs uppercase tracking-wider border-b border-slate-100">
+                            <th class="py-3 px-4">ছবি</th>
+                            <th class="py-3 px-4">রোল</th>
+                            <th class="py-3 px-4">পরীক্ষার্থীর নাম ও পিতামাতা</th>
+                            <th class="py-3 px-4">জন্মতারিখ</th>
+                            <th class="py-3 px-4">শ্রেণী</th>
+                            <th class="py-3 px-4">পরীক্ষার বিস্তারিত (তলা ও রুম)</th>
+                            <th class="py-3 px-4">ডিউটি শিক্ষক</th>
+                            <th class="py-3 px-4">স্বাক্ষর</th>
+                            <th class="py-3 px-4">মন্তব্য</th>
+                            <th class="py-3 px-4 text-center">অবস্থা</th>
+                            <th class="py-3 px-4 text-right no-print admin-only">অ্যাকশন</th>
+                        </tr>
+                    </thead>
+                    <tbody id="studentTableBody" class="divide-y divide-slate-100 text-xs">
+                        <!-- Table Rows Rendered via JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty State Display -->
+            <div id="emptyState" class="hidden py-10 text-center">
+                <div class="w-12 h-12 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-2 text-xl">
+                    <i class="fa-solid fa-folder-open"></i>
+                </div>
+                <h3 class="text-xs font-bold text-slate-700">কোনো তথ্য পাওয়া যায়নি</h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">নতুন পরীক্ষার্থী যোগ করুন অথবা ফিল্টার পরিবর্তন করুন।</p>
+            </div>
+
+            <!-- Print Footer Banner -->
+            <div class="hidden print-only p-3 border-t border-slate-200 text-center text-xs text-slate-600 font-medium">
+                এই অ্যাপটি <span class="font-bold">সুবালা কম্পিউটার এন্ড কম্পোজ</span> দ্বারা নির্মিত
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Student Edit Modal (Admin Only) -->
+    <div id="editStudentModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl p-5 max-w-md w-full shadow-2xl border border-slate-100">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-100 mb-3">
+                <h3 class="font-bold text-slate-800 text-xs flex items-center gap-2">
+                    <i class="fa-solid fa-user-pen text-emerald-600"></i> পরীক্ষার্থীর তথ্য সংশোধন করুন
+                </h3>
+                <button onclick="closeEditStudentModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form onsubmit="handleSaveEditStudent(event)" class="space-y-3">
+                <input type="hidden" id="editStudentId">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">রোল নং</label>
+                        <input type="text" id="editStudentRoll" required class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">পরীক্ষার্থীর নাম</label>
+                        <input type="text" id="editStudentName" required class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">জন্মতারিখ</label>
+                        <input type="text" id="editStudentDob" class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">পিতার নাম</label>
+                        <input type="text" id="editFatherName" class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">মাতার নাম</label>
+                        <input type="text" id="editMotherName" class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">মন্তব্য</label>
+                        <input type="text" id="editRemarks" class="w-full border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                    </div>
+                </div>
+
+                <div class="mt-4 flex gap-2 justify-end">
+                    <button type="button" onclick="closeEditStudentModal()" class="px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-xl hover:bg-slate-200 font-semibold transition">
+                        বাতিল
+                    </button>
+                    <button type="submit" class="px-4 py-1.5 bg-emerald-600 text-white text-xs rounded-xl hover:bg-emerald-700 font-semibold transition">
+                        আপডেট করুন
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Camera Modal with Front & Back Camera Switch & NID Signature Crop Support -->
+    <div id="cameraModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl p-5 max-w-md w-full shadow-2xl border border-slate-100">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-100 mb-3">
+                <h3 id="cameraModalTitle" class="font-bold text-slate-800 text-xs flex items-center gap-2">
+                    <i class="fa-solid fa-camera text-emerald-600"></i> ছবি তুলুন
+                </h3>
+                <button onclick="closeCameraModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <div id="cameraContainerBox" class="relative bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center">
+                <video id="webcamVideo" autoplay playsinline class="w-full h-full object-cover"></video>
+                <!-- NID Style Cropping Overlay Guide for Signature -->
+                <div id="nidCropGuide" class="hidden absolute border-2 border-dashed border-yellow-400 w-3/4 h-1/3 pointer-events-none rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] flex items-center justify-center">
+                    <span class="text-[10px] text-yellow-300 bg-black/60 px-2 py-0.5 rounded font-bold">এখানে স্বাক্ষর রাখুন</span>
+                </div>
+                <canvas id="cameraCanvas" class="hidden"></canvas>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2 justify-between items-center">
+                <button type="button" onclick="switchCameraFacingMode()" class="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs rounded-xl hover:bg-indigo-100 font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-camera-rotate"></i> ক্যামেরা ঘোরান (সামনে/পিছনে)
+                </button>
+                <div class="flex gap-2">
+                    <button type="button" onclick="closeCameraModal()" class="px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-xl hover:bg-slate-200 font-semibold transition">
+                        বাতিল
+                    </button>
+                    <button type="button" onclick="capturePhoto()" class="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-xl hover:bg-emerald-700 font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-dot"></i> ছবি তুলুন
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Managing Dropdown Options -->
+    <div id="manageOptionsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl p-5 max-w-md w-full shadow-2xl border border-slate-100">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-100 mb-3">
+                <h3 id="modalTitle" class="font-bold text-slate-800 text-xs">তালিকা সংশোধন করুন</h3>
+                <button onclick="closeAddOptionModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="flex gap-2 mb-3">
+                <input type="text" id="newOptionInput" placeholder="নতুন নাম লিখুন..." class="flex-grow border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                <button onclick="submitNewOption()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-emerald-700 transition">
+                    যোগ
+                </button>
+            </div>
+
+            <label class="block text-[11px] font-bold text-slate-600 mb-1.5">বর্তমান তালিকা:</label>
+            <div id="existingOptionsList" class="max-h-48 overflow-y-auto space-y-1 border border-slate-100 p-2 rounded-xl bg-slate-50">
+            </div>
+
+            <div class="mt-4 flex justify-end">
+                <button onclick="closeAddOptionModal()" class="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-xl font-semibold hover:bg-slate-300">
+                    বন্ধ করুন
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Modal for Changing User Password -->
+    <div id="changePassModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl p-5 max-w-sm w-full shadow-2xl border border-slate-100">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-100 mb-3">
+                <h3 class="font-bold text-slate-800 text-xs flex items-center gap-2">
+                    <i class="fa-solid fa-key text-amber-500"></i> ইউজারের পাসওয়ার্ড সেট করুন
+                </h3>
+                <button onclick="closeChangePassModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">নতুন পাসওয়ার্ড (User Password)</label>
+                    <input type="text" id="newUserPassInput" placeholder="যেমন: user123" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20">
+                </div>
+                <div id="passSuccessMsg" class="hidden text-[11px] text-emerald-600 bg-emerald-50 p-2 rounded-lg text-center font-bold">
+                    পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে!
+                </div>
+            </div>
+
+            <div class="mt-4 flex gap-2 justify-end">
+                <button onclick="closeChangePassModal()" class="px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-xl hover:bg-slate-200 font-semibold transition">
+                    বাতিল
+                </button>
+                <button onclick="saveUserPassword()" class="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-xl hover:bg-emerald-700 font-semibold transition">
+                    সেভ করুন
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript App Logic -->
+    <script>
+        let currentUserRole = null;
+        let appConfig = {
+            examTypes: ['অর্ধ বার্ষিক পরীক্ষা', 'বার্ষিক পরীক্ষা', 'প্রাক-নির্বাচনী', 'নির্বাচনী পরীক্ষা'],
+            classes: ['৬ষ্ঠ', '৭ম', '৮ম', '৯ম', '১০ম'],
+            subjects: ['বাংলা', 'ইংরেজি', 'গণিত', 'বিজ্ঞান', 'সাধারণ জ্ঞান'],
+            teachers: ['সুব্রত মজুমদার', 'মো: আব্দুর রহমান', 'মোসাম্মাৎ পারভীন আক্তার']
+        };
+
+        let currentOptionCategory = '';
+        let capturedPhotoData = null;
+        let capturedSigData = null;
+        let activeCaptureTarget = 'photo'; // 'photo' or 'signature'
+        let currentFacingMode = 'user'; // 'user' (selfie) or 'environment' (back)
+        let isNidCropActive = false;
+        let studentsList = [];
+        let mediaStream = null;
+
+        window.onload = function() {
+            checkAuthSession();
+            loadLocalStorageData();
+            initDefaultDate();
+            populateDropdowns();
+            populateDateFilter();
+            renderStudentsTable();
+            updateDashboardStats();
+
+            if (window.initFirebaseSync) {
+                window.initFirebaseSync();
+            }
+        };
+
+        function checkAuthSession() {
+            const savedRole = sessionStorage.getItem('app_user_role');
+            if (savedRole) {
+                currentUserRole = savedRole;
+                document.getElementById('loginModal').classList.add('hidden');
+                applyRolePermissions();
+            } else {
+                document.getElementById('loginModal').classList.remove('hidden');
+            }
+        }
+
+        function handleLogin(e) {
+            e.preventDefault();
+            const u = document.getElementById('loginUsername').value.trim();
+            const p = document.getElementById('loginPassword').value.trim();
+
+            const currentAdminPass = '2026#$';
+            const currentAdminUser = 'AdminS';
+            const currentUserPass = localStorage.getItem('app_custom_user_pass') || 'user123';
+
+            if (u === currentAdminUser && p === currentAdminPass) {
+                currentUserRole = 'admin';
+            } else if ((u === 'user' || u === 'User') && p === currentUserPass) {
+                currentUserRole = 'user';
+            } else {
+                document.getElementById('loginErrorMsg').classList.remove('hidden');
+                return;
+            }
+
+            sessionStorage.setItem('app_user_role', currentUserRole);
+            document.getElementById('loginErrorMsg').classList.add('hidden');
+            document.getElementById('loginModal').classList.add('hidden');
+            applyRolePermissions();
+        }
+
+        function openChangePassModal() {
+            if (currentUserRole !== 'admin') return;
+            document.getElementById('newUserPassInput').value = localStorage.getItem('app_custom_user_pass') || 'user123';
+            document.getElementById('passSuccessMsg').classList.add('hidden');
+            document.getElementById('changePassModal').classList.remove('hidden');
+        }
+
+        function closeChangePassModal() {
+            document.getElementById('changePassModal').classList.add('hidden');
+        }
+
+        function saveUserPassword() {
+            const val = document.getElementById('newUserPassInput').value.trim();
+            if (!val) return;
+            localStorage.setItem('app_custom_user_pass', val);
+            document.getElementById('passSuccessMsg').classList.remove('hidden');
+            setTimeout(() => {
+                closeChangePassModal();
+            }, 1000);
+        }
+
+        function handleLogout() {
+            sessionStorage.removeItem('app_user_role');
+            currentUserRole = null;
+            document.getElementById('loginModal').classList.remove('hidden');
+        }
+
+        function applyRolePermissions() {
+            const roleDisplay = document.getElementById('currentRoleDisplay');
+            const adminOnlyElements = document.querySelectorAll('.admin-only');
+
+            if (currentUserRole === 'admin') {
+                roleDisplay.innerText = 'এডমিন (Admin)';
+                adminOnlyElements.forEach(el => el.classList.remove('hidden'));
+                document.getElementById('schoolNameInput').disabled = false;
+            } else {
+                roleDisplay.innerText = 'ইনভিজিলেটর (User)';
+                adminOnlyElements.forEach(el => el.classList.add('hidden'));
+                document.getElementById('schoolNameInput').disabled = true;
+            }
+            renderStudentsTable();
+        }
+
+        function loadLocalStorageData() {
+            const savedConfig = localStorage.getItem('exam_app_config');
+            if (savedConfig) {
+                try { appConfig = JSON.parse(savedConfig); } catch(e) {}
+            }
+
+            const savedSchool = localStorage.getItem('exam_app_school_name');
+            if (savedSchool) {
+                document.getElementById('schoolNameInput').value = savedSchool;
+            } else {
+                document.getElementById('schoolNameInput').value = 'রমজানপুর আইডিয়াল টেকনিক্যাল স্কুল এন্ড কলেজ';
+            }
+
+            const savedStudents = localStorage.getItem('exam_app_students');
+            if (savedStudents) {
+                try { studentsList = JSON.parse(savedStudents); } catch(e) {}
+            }
+        }
+
+        function saveSchoolName() {
+            const val = document.getElementById('schoolNameInput').value;
+            localStorage.setItem('exam_app_school_name', val);
+            if (window.syncToCloud) window.syncToCloud();
+        }
+
+        function saveData() {
+            localStorage.setItem('exam_app_config', JSON.stringify(appConfig));
+            localStorage.setItem('exam_app_students', JSON.stringify(studentsList));
+            if (window.syncToCloud) window.syncToCloud();
+        }
+
+        function initDefaultDate() {
+            const now = new Date();
+            const days = ['রবিবার', 'সোমবার', 'মঙ্গলবার', 'বুধবার', 'বৃহস্পতিবার', 'শুক্রবার', 'শনিবার'];
+            const months = ['জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'];
+
+            const dayName = days[now.getDay()];
+            const dateNum = convertToBengaliNumeral(now.getDate());
+            const monthName = months[now.getMonth()];
+            const yearNum = convertToBengaliNumeral(now.getFullYear());
+
+            const formattedDate = `${dayName}, ${dateNum} ${monthName} ${yearNum}`;
+            document.getElementById('customDateInput').value = formattedDate;
+        }
+
+        function convertToBengaliNumeral(num) {
+            const banglaDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+            return num.toString().replace(/\d/g, d => banglaDigits[d]);
+        }
+
+        function parseBengaliOrEnglishNumber(str) {
+            if (!str) return 0;
+            const banglaToEng = { '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4', '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9' };
+            const converted = str.toString().replace(/[০-৯]/g, d => banglaToEng[d]);
+            const parsed = parseInt(converted.replace(/\D/g, ''), 10);
+            return isNaN(parsed) ? 0 : parsed;
+        }
+
+        function populateDropdowns() {
+            fillDropdown('examTypeSelect', appConfig.examTypes);
+            fillDropdown('classSelect', appConfig.classes);
+            fillDropdown('subjectSelect', appConfig.subjects);
+            fillDropdown('teacherSelect', appConfig.teachers);
+
+            const teacher2 = document.getElementById('teacher2Select');
+            if (teacher2) {
+                const currentVal = teacher2.value;
+                teacher2.innerHTML = `<option value="">-- ২য় শিক্ষক (যদি থাকে) --</option>` + appConfig.teachers.map(t => `<option value="${t}">${t}</option>`).join('');
+                teacher2.value = currentVal;
+            }
+
+            const filterClassSelect = document.getElementById('filterClass');
+            if (filterClassSelect) {
+                const currentVal = filterClassSelect.value;
+                filterClassSelect.innerHTML = `<option value="ALL">সকল শ্রেণি</option>` + appConfig.classes.map(c => `<option value="${c}">${c}</option>`).join('');
+                filterClassSelect.value = currentVal;
+            }
+
+            updateDynamicRoomFilter();
+            populateDateFilter();
+        }
+
+        function populateDateFilter() {
+            const filterDateSelect = document.getElementById('filterDate');
+            if (!filterDateSelect) return;
+            const dates = Array.from(new Set(studentsList.map(s => s.examDate).filter(Boolean)));
+            const currentVal = filterDateSelect.value;
+            filterDateSelect.innerHTML = `<option value="ALL">সকল তারিখ</option>` + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+            filterDateSelect.value = currentVal;
+        }
+
+        function updateDynamicRoomFilter() {
+            const filterRoomSelect = document.getElementById('filterRoom');
+            if (!filterRoomSelect) return;
+            const rooms = Array.from(new Set(studentsList.map(s => s.room).filter(Boolean)));
+            const currentVal = filterRoomSelect.value;
+            filterRoomSelect.innerHTML = `<option value="ALL">সকল রুম/হল</option>` + rooms.map(r => `<option value="${r}">রুম নং: ${r}</option>`).join('');
+            filterRoomSelect.value = currentVal;
+        }
+
+        function fillDropdown(elementId, items) {
+            const select = document.getElementById(elementId);
+            if (select) {
+                select.innerHTML = items.map(item => `<option value="${item}">${item}</option>`).join('');
+            }
+        }
+
+        function startCameraStream(facingMode) {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            const video = document.getElementById('webcamVideo');
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode } })
+                    .then(stream => {
+                        mediaStream = stream;
+                        video.srcObject = stream;
+                    })
+                    .catch(err => {
+                        console.error("Camera Access Error:", err);
+                        navigator.mediaDevices.getUserMedia({ video: true })
+                            .then(stream => {
+                                mediaStream = stream;
+                                video.srcObject = stream;
+                            })
+                            .catch(e => {
+                                alert("ক্যামেরা চালুর অনুমতি দিন অথবা ফাইল আপলোড ব্যবহার করুন।");
+                                closeCameraModal();
+                            });
+                    });
+            }
+        }
+
+        function openCameraModal(target = 'photo', defaultFacing = 'user', cropActive = false) {
+            activeCaptureTarget = target;
+            currentFacingMode = defaultFacing;
+            isNidCropActive = cropActive;
+
+            const titleEl = document.getElementById('cameraModalTitle');
+            const cropGuideEl = document.getElementById('nidCropGuide');
+
+            if (target === 'signature') {
+                titleEl.innerHTML = `<i class="fa-solid fa-signature text-blue-600"></i> স্বাক্ষরের ছবি তুলুন (NID ক্রপ)`;
+                cropGuideEl.classList.remove('hidden');
+            } else {
+                titleEl.innerHTML = `<i class="fa-solid fa-camera text-emerald-600"></i> পরীক্ষার্থীর ছবি তুলুন`;
+                cropGuideEl.classList.add('hidden');
+            }
+
+            document.getElementById('cameraModal').classList.remove('hidden');
+            startCameraStream(currentFacingMode);
+        }
+
+        function switchCameraFacingMode() {
+            currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+            startCameraStream(currentFacingMode);
+        }
+
+        function closeCameraModal() {
+            document.getElementById('cameraModal').classList.add('hidden');
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('webcamVideo');
+            const canvas = document.getElementById('cameraCanvas');
+            const context = canvas.getContext('2d');
+
+            const videoW = video.videoWidth || 640;
+            const videoH = video.videoHeight || 480;
+
+            if (isNidCropActive) {
+                // NID style crop for signature (Center 75% width, 33% height)
+                const cropW = videoW * 0.75;
+                const cropH = videoH * 0.33;
+                const cropX = (videoW - cropW) / 2;
+                const cropY = (videoH - cropH) / 2;
+
+                canvas.width = cropW;
+                canvas.height = cropH;
+                context.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            } else {
+                canvas.width = videoW;
+                canvas.height = videoH;
+                context.drawImage(video, 0, 0, videoW, videoH);
+            }
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            if (activeCaptureTarget === 'signature') {
+                capturedSigData = dataUrl;
+                updatePreviewBox('signature', dataUrl);
+            } else {
+                capturedPhotoData = dataUrl;
+                updatePreviewBox('photo', dataUrl);
+            }
+            closeCameraModal();
+        }
+
+        function handleFileUpload(event, target = 'photo') {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    if (target === 'signature') {
+                        capturedSigData = e.target.result;
+                        updatePreviewBox('signature', capturedSigData);
+                    } else {
+                        capturedPhotoData = e.target.result;
+                        updatePreviewBox('photo', capturedPhotoData);
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function updatePreviewBox(target, src) {
+            if (target === 'signature') {
+                const img = document.getElementById('sigPreview');
+                img.src = src;
+                img.classList.remove('hidden');
+                document.getElementById('sigPlaceholderIcon').classList.add('hidden');
+                document.getElementById('removeSigBtn').classList.remove('hidden');
+            } else {
+                const img = document.getElementById('photoPreview');
+                img.src = src;
+                img.classList.remove('hidden');
+                document.getElementById('photoPlaceholderIcon').classList.add('hidden');
+                document.getElementById('removePhotoBtn').classList.remove('hidden');
+            }
+        }
+
+        function resetCapturedPhoto(target = 'all') {
+            if (target === 'photo' || target === 'all') {
+                capturedPhotoData = null;
+                document.getElementById('photoPreview').src = '';
+                document.getElementById('photoPreview').classList.add('hidden');
+                document.getElementById('photoPlaceholderIcon').classList.remove('hidden');
+                document.getElementById('removePhotoBtn').classList.add('hidden');
+                if (document.getElementById('photoFileInput')) document.getElementById('photoFileInput').value = '';
+            }
+            if (target === 'signature' || target === 'all') {
+                capturedSigData = null;
+                document.getElementById('sigPreview').src = '';
+                document.getElementById('sigPreview').classList.add('hidden');
+                document.getElementById('sigPlaceholderIcon').classList.remove('hidden');
+                document.getElementById('removeSigBtn').classList.add('hidden');
+                if (document.getElementById('sigFileInput')) document.getElementById('sigFileInput').value = '';
+            }
+        }
+
+        function getTeachersInfo() {
+            const t1 = document.getElementById('teacherSelect').value;
+            const t2 = document.getElementById('teacher2Select').value;
+            if (t2 && t2 !== t1) {
+                return `${t1}, ${t2}`;
+            }
+            return t1;
+        }
+
+        function handleAddStudent(e) {
+            e.preventDefault();
+
+            const roll = document.getElementById('studentRoll').value.trim();
+            const name = document.getElementById('studentName').value.trim() || document.getElementById('studentName').placeholder;
+            const dob = document.getElementById('studentDob').value.trim() || '-';
+            const fatherName = document.getElementById('fatherName').value.trim() || document.getElementById('fatherName').placeholder;
+            const motherName = document.getElementById('motherName').value.trim() || document.getElementById('motherName').placeholder;
+            const remarks = document.getElementById('remarksInput').value.trim();
+            const status = document.querySelector('input[name="attendanceStatus"]:checked').value;
+
+            const examType = document.getElementById('examTypeSelect').value;
+            const studentClass = document.getElementById('classSelect').value;
+            const subject = document.getElementById('subjectSelect').value;
+            const teacher = getTeachersInfo();
+            const examDate = document.getElementById('customDateInput').value.trim();
+
+            const floor = document.getElementById('floorInput').value.trim() || '২';
+            const room = document.getElementById('roomInput').value.trim() || '২০৪';
+            const time = document.getElementById('timeInput').value.trim() || '10 : 00 AM';
+            const shift = document.getElementById('shiftSelect').value;
+
+            const newStudent = {
+                id: Date.now(),
+                roll,
+                name,
+                dob,
+                fatherName,
+                motherName,
+                remarks,
+                photo: capturedPhotoData,
+                signaturePhoto: capturedSigData,
+                status,
+                examType,
+                class: studentClass,
+                subject,
+                teacher,
+                examDate,
+                floor,
+                room,
+                time,
+                shift
+            };
+
+            studentsList.unshift(newStudent);
+            saveData();
+
+            document.getElementById('studentEntryForm').reset();
+            resetCapturedPhoto('all');
+            updateDynamicRoomFilter();
+            populateDateFilter();
+            renderStudentsTable();
+            updateDashboardStats();
+        }
+
+        function openEditStudentModal(id) {
+            if (currentUserRole !== 'admin') return;
+            const student = studentsList.find(s => s.id === id);
+            if (!student) return;
+
+            document.getElementById('editStudentId').value = student.id;
+            document.getElementById('editStudentRoll').value = student.roll || '';
+            document.getElementById('editStudentName').value = student.name || '';
+            document.getElementById('editStudentDob').value = student.dob || '';
+            document.getElementById('editFatherName').value = student.fatherName || '';
+            document.getElementById('editMotherName').value = student.motherName || '';
+            document.getElementById('editRemarks').value = student.remarks || '';
+
+            document.getElementById('editStudentModal').classList.remove('hidden');
+        }
+
+        function closeEditStudentModal() {
+            document.getElementById('editStudentModal').classList.add('hidden');
+        }
+
+        function handleSaveEditStudent(e) {
+            e.preventDefault();
+            const id = parseInt(document.getElementById('editStudentId').value, 10);
+            const student = studentsList.find(s => s.id === id);
+            if (student) {
+                student.roll = document.getElementById('editStudentRoll').value.trim();
+                student.name = document.getElementById('editStudentName').value.trim();
+                student.dob = document.getElementById('editStudentDob').value.trim();
+                student.fatherName = document.getElementById('editFatherName').value.trim();
+                student.motherName = document.getElementById('editMotherName').value.trim();
+                student.remarks = document.getElementById('editRemarks').value.trim();
+
+                saveData();
+                renderStudentsTable();
+                closeEditStudentModal();
+            }
+        }
+
+        function updateStudentStatus(id, newStatus) {
+            const student = studentsList.find(s => s.id === id);
+            if (student) {
+                student.status = newStatus;
+                saveData();
+                renderStudentsTable();
+                updateDashboardStats();
+            }
+        }
+
+        function updateStudentRemarks(id, newRemarks) {
+            const student = studentsList.find(s => s.id === id);
+            if (student) {
+                student.remarks = newRemarks;
+                saveData();
+            }
+        }
+
+        function deleteStudent(id) {
+            if (currentUserRole !== 'admin') return;
+            studentsList = studentsList.filter(s => s.id !== id);
+            saveData();
+            renderStudentsTable();
+            updateDashboardStats();
+            populateDateFilter();
+            updateDynamicRoomFilter();
+        }
+
+        function openAddOptionModal(category) {
+            if (currentUserRole !== 'admin') return;
+            currentOptionCategory = category;
+            const titleMap = {
+                examType: 'পরীক্ষার ধরণ পরিচালনা',
+                class: 'শ্রেণি তালিকা পরিচালনা',
+                subject: 'বিষয় তালিকা পরিচালনা',
+                teacher: 'শিক্ষকদের তালিকা পরিচালনা'
+            };
+            document.getElementById('modalTitle').innerText = titleMap[category] || 'তালিকা পরিচালনা';
+            renderExistingOptions();
+            document.getElementById('manageOptionsModal').classList.remove('hidden');
+        }
+
+        function closeAddOptionModal() {
+            document.getElementById('manageOptionsModal').classList.add('hidden');
+            document.getElementById('newOptionInput').value = '';
+        }
+
+        function renderExistingOptions() {
+            const listDiv = document.getElementById('existingOptionsList');
+            const keyMap = { examType: 'examTypes', class: 'classes', subject: 'subjects', teacher: 'teachers' };
+            const arrKey = keyMap[currentOptionCategory];
+            const items = appConfig[arrKey] || [];
+
+            if (items.length === 0) {
+                listDiv.innerHTML = `<p class="text-xs text-slate-400 text-center py-2">কোনো নাম পাওয়া যায়নি</p>`;
+                return;
+            }
+
+            listDiv.innerHTML = items.map((item, idx) => `
+                <div class="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-100 text-xs">
+                    <span class="font-medium text-slate-700">${item}</span>
+                    <button onclick="removeOption(${idx})" class="text-rose-500 hover:text-rose-700 px-2 py-0.5 rounded hover:bg-rose-50 font-bold">
+                        <i class="fa-solid fa-trash text-[10px]"></i> মুছে ফেলুন
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function submitNewOption() {
+            const input = document.getElementById('newOptionInput');
+            const val = input.value.trim();
+            if (!val) return;
+
+            const keyMap = { examType: 'examTypes', class: 'classes', subject: 'subjects', teacher: 'teachers' };
+            const arrKey = keyMap[currentOptionCategory];
+
+            if (!appConfig[arrKey].includes(val)) {
+                appConfig[arrKey].push(val);
+                saveData();
+                populateDropdowns();
+                renderExistingOptions();
+            }
+            input.value = '';
+        }
+
+        function removeOption(index) {
+            const keyMap = { examType: 'examTypes', class: 'classes', subject: 'subjects', teacher: 'teachers' };
+            const arrKey = keyMap[currentOptionCategory];
+            appConfig[arrKey].splice(index, 1);
+            saveData();
+            populateDropdowns();
+            renderExistingOptions();
+        }
+
+        function getFilteredStudentsList() {
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const filterVal = document.getElementById('filterStatus').value;
+            const filterClassVal = document.getElementById('filterClass') ? document.getElementById('filterClass').value : 'ALL';
+            const filterRoomVal = document.getElementById('filterRoom') ? document.getElementById('filterRoom').value : 'ALL';
+            const filterShiftVal = document.getElementById('filterShift') ? document.getElementById('filterShift').value : 'ALL';
+            const filterDateVal = document.getElementById('filterDate') ? document.getElementById('filterDate').value : 'ALL';
+
+            return studentsList.filter(student => {
+                const matchesSearch = student.name.toLowerCase().includes(searchVal) || 
+                                     student.roll.toLowerCase().includes(searchVal) ||
+                                     student.class.toLowerCase().includes(searchVal);
+                const matchesStatus = filterVal === 'ALL' || student.status === filterVal;
+                const matchesClass = filterClassVal === 'ALL' || student.class === filterClassVal;
+                const matchesRoom = filterRoomVal === 'ALL' || student.room === filterRoomVal;
+                const matchesShift = filterShiftVal === 'ALL' || student.shift === filterShiftVal;
+                const matchesDate = filterDateVal === 'ALL' || student.examDate === filterDateVal;
+
+                return matchesSearch && matchesStatus && matchesClass && matchesRoom && matchesShift && matchesDate;
+            });
+        }
+
+        function renderStudentsTable(studentsToRender = null) {
+            const tbody = document.getElementById('studentTableBody');
+            const emptyState = document.getElementById('emptyState');
+
+            let filtered = studentsToRender || getFilteredStudentsList();
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+
+            tbody.innerHTML = filtered.map(student => {
+                const isPresent = student.status === 'Present';
+                
+                const avatar = student.photo 
+                    ? `<img src="${student.photo}" class="w-9 h-9 rounded-xl object-cover border border-slate-200" alt="${student.name}">`
+                    : `<div class="w-9 h-9 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center font-bold text-xs border border-slate-200"><i class="fa-solid fa-user"></i></div>`;
+
+                const sigCell = student.signaturePhoto
+                    ? `<img src="${student.signaturePhoto}" class="h-8 w-20 object-contain bg-white rounded border border-slate-200 p-0.5" alt="স্বাক্ষর">`
+                    : `<div class="h-8 w-20 border border-dashed border-slate-300 rounded flex items-center justify-center text-[10px] text-slate-400">স্বাক্ষর নেই</div>`;
+
+                const parentsInfo = (student.fatherName || student.motherName)
+                    ? `<div class="text-[10px] text-slate-500 mt-0.5">
+                         ${student.fatherName ? `পি: ${student.fatherName}` : ''} 
+                         ${student.motherName ? ` | মা: ${student.motherName}` : ''}
+                       </div>`
+                    : '';
+
+                const actionCol = (currentUserRole === 'admin')
+                    ? `<td class="py-2.5 px-4 text-right no-print admin-only">
+                         <div class="flex items-center justify-end gap-1">
+                             <button onclick="openEditStudentModal(${student.id})" title="সম্পাদনা করুন" class="text-amber-600 hover:text-amber-800 p-1.5 rounded-lg hover:bg-amber-50 transition">
+                                 <i class="fa-solid fa-pen-to-square"></i>
+                             </button>
+                             <button onclick="deleteStudent(${student.id})" title="মুছে ফেলুন" class="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition">
+                                 <i class="fa-solid fa-trash"></i>
+                             </button>
+                         </div>
+                       </td>`
+                    : '<td class="hidden no-print"></td>';
+
+                return `
+                    <tr class="hover:bg-slate-50/50 transition border-b border-slate-100">
+                        <td class="py-2.5 px-4">${avatar}</td>
+                        <td class="py-2.5 px-4 font-bold text-slate-800">${student.roll}</td>
+                        <td class="py-2.5 px-4">
+                            <div class="font-bold text-slate-800">${student.name}</div>
+                            ${parentsInfo}
+                        </td>
+                        <td class="py-2.5 px-4 text-slate-600 font-medium">${student.dob || '-'}</td>
+                        <td class="py-2.5 px-4 font-bold text-emerald-700">${student.class}</td>
+                        <td class="py-2.5 px-4 text-[11px]">
+                            <div class="text-slate-600 font-semibold">তলা: ${student.floor}, রুম: ${student.room}</div>
+                        </td>
+                        <td class="py-2.5 px-4 font-semibold text-slate-600">${student.teacher}</td>
+                        <td class="py-2.5 px-4">${sigCell}</td>
+                        <td class="py-2.5 px-4">
+                            <input type="text" value="${student.remarks || ''}" onchange="updateStudentRemarks(${student.id}, this.value)" placeholder="মন্তব্য লিখুন..." class="no-print w-full border border-slate-200 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:border-emerald-500">
+                            <span class="hidden print-only text-xs">${student.remarks || '-'}</span>
+                        </td>
+                        <td class="py-2.5 px-4 text-center">
+                            <select onchange="updateStudentStatus(${student.id}, this.value)" class="no-print text-xs font-bold px-2 py-1 rounded-lg border border-slate-200 focus:outline-none ${isPresent ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300'}">
+                                <option value="Present" ${isPresent ? 'selected' : ''}>✓ উপস্থিত</option>
+                                <option value="Absent" ${!isPresent ? 'selected' : ''}>✕ অনুপস্থিত</option>
+                            </select>
+                            <span class="hidden print-only font-bold ${isPresent ? 'text-emerald-700' : 'text-rose-700'}">
+                                ${isPresent ? '✓ উপস্থিত' : '✕ অনুপস্থিত'}
+                            </span>
+                        </td>
+                        ${actionCol}
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function updateDashboardStats() {
+            const total = studentsList.length;
+            const present = studentsList.filter(s => s.status === 'Present').length;
+            const absent = studentsList.filter(s => s.status === 'Absent').length;
+
+            document.getElementById('statTotal').innerText = convertToBengaliNumeral(total);
+            document.getElementById('statPresent').innerText = convertToBengaliNumeral(present);
+            document.getElementById('statAbsent').innerText = convertToBengaliNumeral(absent);
+        }
+
+        function exportToCSV() {
+            if (studentsList.length === 0) return alert('রপ্তানি করার মতো তথ্য নেই।');
+
+            let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+            csvContent += "তারিখ,রোল,নাম,জন্মতারিখ,পিতার নাম,মাতার নাম,শ্রেণি,তলা ও রুম,শিক্ষক,স্বাক্ষর অবস্থা,অবস্থা,মন্তব্য\n";
+
+            studentsList.forEach(s => {
+                const row = [
+                    `"${s.examDate || ''}"`,
+                    `"${s.roll}"`,
+                    `"${s.name}"`,
+                    `"${s.dob || ''}"`,
+                    `"${s.fatherName || ''}"`,
+                    `"${s.motherName || ''}"`,
+                    `"${s.class}"`,
+                    `"তলা: ${s.floor}, রুম: ${s.room}"`,
+                    `"${s.teacher}"`,
+                    `"${s.signaturePhoto ? 'স্বাক্ষর সংযুক্ত' : 'স্বাক্ষর নেই'}"`,
+                    `"${s.status === 'Present' ? 'উপস্থিত' : 'অনুপস্থিত'}"`,
+                    `"${s.remarks || ''}"`
+                ].join(",");
+                csvContent += row + "\n";
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `exam_attendance_${Date.now()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function preparePrintAndStart() {
+            const schoolName = document.getElementById('schoolNameInput').value.trim();
+            const selectedClassFilter = document.getElementById('filterClass').value;
+            const selectedRoomFilter = document.getElementById('filterRoom').value;
+            const selectedShiftFilter = document.getElementById('filterShift').value;
+            const selectedDateFilter = document.getElementById('filterDate').value;
+
+            const displayClass = selectedClassFilter === 'ALL' ? 'সকল' : selectedClassFilter;
+            const displayRoom = selectedRoomFilter === 'ALL' ? 'সকল' : selectedRoomFilter;
+            const displayDate = selectedDateFilter === 'ALL' ? document.getElementById('customDateInput').value : selectedDateFilter;
+
+            const displayShift = selectedShiftFilter === 'ALL' ? document.getElementById('shiftSelect').value : selectedShiftFilter;
+
+            document.getElementById('printSchoolName').innerText = schoolName || 'রমজানপুর আইডিয়াল টেকনিক্যাল স্কুল এন্ড কলেজ';
+            document.getElementById('printExamTitle').innerText = `পরীক্ষার ধরণ: ${document.getElementById('examTypeSelect').value}`;
+            document.getElementById('printClass').innerText = displayClass;
+            document.getElementById('printSubject').innerText = document.getElementById('subjectSelect').value;
+            document.getElementById('printTeacher').innerText = getTeachersInfo();
+
+            document.getElementById('printRoom').innerText = displayRoom;
+            document.getElementById('printDate').innerText = displayDate || '--';
+            document.getElementById('printTime').innerText = `${document.getElementById('timeInput').value || '10 : 00 AM'} (${displayShift})`;
+
+            // Sort print list strictly by Roll Number (Numerical Ascending)
+            let printStudents = getFilteredStudentsList();
+            printStudents.sort((a, b) => {
+                const rollA = parseBengaliOrEnglishNumber(a.roll);
+                const rollB = parseBengaliOrEnglishNumber(b.roll);
+                return rollA - rollB;
+            });
+
+            renderStudentsTable(printStudents);
+
+            window.print();
+
+            setTimeout(() => {
+                renderStudentsTable();
+            }, 500);
+        }
+    </script>
+</body>
+</html>
